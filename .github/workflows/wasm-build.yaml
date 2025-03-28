@@ -7,7 +7,12 @@
 name: Wasm Build
 
 on:
+  workflow_dispatch:
+  schedule:
+    - cron: "0 0 * * *"
   push:
+    tags:
+      - '**'
     paths:
       - '.github/workflows/wasm-build.yaml'
       - 'CMakeLists.txt'
@@ -239,3 +244,70 @@ jobs:
           src/platforms/emscripten/build/src/AtomVM-web-${{ github.ref_name }}.js.sha256
           src/platforms/emscripten/build/src/AtomVM-web-${{ github.ref_name }}.wasm
           src/platforms/emscripten/build/src/AtomVM-web-${{ github.ref_name }}.wasm.sha256
+
+  hex_release:
+    if: startsWith(github.ref, 'refs/tags/')
+    needs: [wasm_build_web, wasm_test_web]
+    runs-on: ubuntu-24.04
+    steps:
+    - name: Checkout repo
+      uses: actions/checkout@v4
+
+    - name: Download wasm build for web
+      uses: actions/download-artifact@v4
+      with:
+        name: atomvm-js-web
+        path: src/platforms/emscripten/build
+
+    - name: "Rename and write sha256sum (web)"
+      shell: bash
+      working-directory: src/platforms/emscripten/build/src
+      run: |
+        ATOMVM_JS=AtomVM-web-${{ github.ref_name }}.js
+        mv AtomVM.js "${ATOMVM_JS}"
+        sha256sum "${ATOMVM_JS}" > "${ATOMVM_JS}.sha256"
+        ATOMVM_WASM=AtomVM-web-${{ github.ref_name }}.wasm
+        mv AtomVM.wasm "${ATOMVM_WASM}"
+        sha256sum "${ATOMVM_WASM}" > "${ATOMVM_WASM}.sha256"
+
+    - uses: erlef/setup-beam@v1
+      with:
+        otp-version: 27
+        elixir-version: 1.18
+
+    - name: Set Hex credentials
+      env:
+        REPOSITORIES_KEY: ${{ secrets.REPOSITORIES_KEY }}
+        WRITE_KEY: ${{ secrets.WRITE_KEY }}
+        READ_KEY: ${{ secrets.READ_KEY }}
+      run: |
+        mkdir -p "${HOME}/.hex"
+        cat <<EOF | tee "${HOME}/.hex/hex.config" > /dev/null
+        {'\$repos',#{<<"hexpm">> =>
+              #{auth_key => <<"${REPOSITORIES_KEY}">>,
+                url => <<"https://repo.hex.pm">>}}}.
+        {'\$write_key',<<"${WRITE_KEY}">>}.
+        {'\$read_key',<<"${READ_KEY}">>}.
+        EOF
+        chmod 0600 "${HOME}/.hex/hex.config"
+
+    - name: "Release to hex.pm"
+      env:
+        MIX_ENV: docs
+      run: |
+        cd atomvm_web/
+        VERSION_V="${{ github.ref_name }}"
+        VERSION="${VERSION_V:1}"
+        sed -i "s/@version \"VERSION_PLACEHOLDER\"/@version \"${VERSION}\"/" mix.exs
+
+        cp -f ../src/platforms/emscripten/build/src/AtomVM-web-${{ github.ref_name }}.js dists/
+        cp -f ../src/platforms/emscripten/build/src/AtomVM-web-${{ github.ref_name }}.js.sha256 dists/
+        cp -f ../src/platforms/emscripten/build/src/AtomVM-web-${{ github.ref_name }}.wasm dists/
+        cp -f ../src/platforms/emscripten/build/src/AtomVM-web-${{ github.ref_name }}.wasm.sha256 dists/
+
+        mix deps.get
+        mix hex.publish --yes
+
+    - name: Remove Hex credentials
+      if: always()
+      run: rm -f "${HOME}/.hex/hex.config"

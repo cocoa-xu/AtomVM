@@ -275,25 +275,10 @@ jobs:
         otp-version: 27
         elixir-version: 1.18
 
-    - name: Set Hex credentials
-      env:
-        REPOSITORIES_KEY: ${{ secrets.REPOSITORIES_KEY }}
-        WRITE_KEY: ${{ secrets.WRITE_KEY }}
-        READ_KEY: ${{ secrets.READ_KEY }}
-      run: |
-        mkdir -p "${HOME}/.hex"
-        cat <<EOF | tee "${HOME}/.hex/hex.config" > /dev/null
-        {'\$repos',#{<<"hexpm">> =>
-              #{auth_key => <<"${REPOSITORIES_KEY}">>,
-                url => <<"https://repo.hex.pm">>}}}.
-        {'\$write_key',<<"${WRITE_KEY}">>}.
-        {'\$read_key',<<"${READ_KEY}">>}.
-        EOF
-        chmod 0600 "${HOME}/.hex/hex.config"
-
     - name: "Release to hex.pm"
       env:
         MIX_ENV: docs
+        HEX_API_KEY: ${{ secrets.HEX_API_KEY }}
       run: |
         cd atomvm_web/
         VERSION_V="${{ github.ref_name }}"
